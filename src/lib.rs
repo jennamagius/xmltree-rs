@@ -121,7 +121,7 @@ fn build<B: Read>(reader: &mut EventReader<B>, mut elem: Element) -> Result<Elem
                     let name = if let Some(prefix) = attr.name.prefix {
                         format!("{}:{}", prefix, attr.name.local_name)
                     } else {
-                        attr.name.local_name.to_string()
+                        attr.name.local_name
                     };
                     attr_map.insert(name, attr.value);
                 }
