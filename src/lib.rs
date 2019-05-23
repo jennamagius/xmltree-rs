@@ -118,7 +118,12 @@ fn build<B: Read>(reader: &mut EventReader<B>, mut elem: Element) -> Result<Elem
             }) => {
                 let mut attr_map = HashMap::new();
                 for attr in attributes {
-                    attr_map.insert(attr.name.local_name, attr.value);
+                    let name = if let Some(prefix) = attr.name.prefix {
+                        format!("{}:{}", prefix, attr.name.local_name)
+                    } else {
+                        attr.name.local_name.to_string()
+                    };
+                    attr_map.insert(name, attr.value);
                 }
 
                 let new_elem = Element {
