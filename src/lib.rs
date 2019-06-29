@@ -30,14 +30,20 @@
 //! ```
 extern crate xml;
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt;
+use std::io::{Read, Write};
 
+pub use xml::namespace::Namespace;
 use xml::reader::{EventReader, XmlEvent};
 pub use xml::writer::{EmitterConfig, Error};
-pub use xml::namespace::Namespace;
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum Child {
+    Text(String),
+    Element(Element),
+}
 
 /// Represents an XML element.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,10 +66,7 @@ pub struct Element {
     pub attributes: HashMap<String, String>,
 
     /// Children
-    pub children: Vec<Element>,
-
-    /// The text data for this element
-    pub text: Option<String>,
+    pub children: Vec<Child>,
 }
 
 /// Errors that can occur parsing XML
@@ -137,15 +140,17 @@ fn build<B: Read>(reader: &mut EventReader<B>, mut elem: Element) -> Result<Elem
                     name: name.local_name,
                     attributes: attr_map,
                     children: Vec::new(),
-                    text: None,
                 };
-                elem.children.push(try!(build(reader, new_elem)));
+                elem.children
+                    .push(Child::Element(try!(build(reader, new_elem))));
             }
             Ok(XmlEvent::Characters(s)) => {
-                elem.text = Some(s);
+                elem.children.push(Child::Text(s));
             }
             Ok(XmlEvent::Whitespace(..)) | Ok(XmlEvent::Comment(..)) => (),
-            Ok(XmlEvent::CData(s)) => elem.text = Some(s),
+            Ok(XmlEvent::CData(s)) => {
+                elem.children.push(Child::Text(s));
+            }
             Ok(XmlEvent::StartDocument { .. })
             | Ok(XmlEvent::EndDocument)
             | Ok(XmlEvent::ProcessingInstruction { .. }) => return Err(ParseError::CannotParse),
@@ -166,7 +171,6 @@ impl Element {
             namespaces: None,
             attributes: HashMap::new(),
             children: Vec::new(),
-            text: None,
         }
     }
 
@@ -196,7 +200,6 @@ impl Element {
                         name: name.local_name,
                         attributes: attr_map,
                         children: Vec::new(),
-                        text: None,
                     };
                     return build(&mut reader, root);
                 }
@@ -207,16 +210,18 @@ impl Element {
                 | Ok(XmlEvent::EndElement { .. })
                 | Ok(XmlEvent::Characters(..))
                 | Ok(XmlEvent::CData(..))
-                | Ok(XmlEvent::ProcessingInstruction { .. }) => return Err(ParseError::CannotParse),
+                | Ok(XmlEvent::ProcessingInstruction { .. }) => {
+                    return Err(ParseError::CannotParse)
+                }
                 Err(e) => return Err(ParseError::MalformedXml(e)),
             }
         }
     }
 
     fn _write<B: Write>(&self, emitter: &mut xml::writer::EventWriter<B>) -> Result<(), Error> {
-        use xml::writer::events::XmlEvent;
-        use xml::name::Name;
         use xml::attribute::Attribute;
+        use xml::name::Name;
+        use xml::writer::events::XmlEvent;
 
         let mut name = Name::local(&self.name);
         if let Some(ref ns) = self.namespace {
@@ -246,11 +251,15 @@ impl Element {
             attributes: Cow::Owned(attributes),
             namespace: namespace,
         })?;
-        if let Some(ref t) = self.text {
-            emitter.write(XmlEvent::Characters(t))?;
-        }
-        for elem in &self.children {
-            elem._write(emitter)?;
+        for child in &self.children {
+            match child {
+                Child::Element(elem) => {
+                    elem._write(emitter)?;
+                }
+                Child::Text(t) => {
+                    emitter.write(XmlEvent::Characters(t))?;
+                }
+            }
         }
         emitter.write(XmlEvent::EndElement { name: Some(name) })?;
 
@@ -264,9 +273,9 @@ impl Element {
 
     /// Writes out this element as the root element in a new XML document using the provided configuration
     pub fn write_with_config<W: Write>(&self, w: W, config: EmitterConfig) -> Result<(), Error> {
-        use xml::writer::EventWriter;
-        use xml::writer::events::XmlEvent;
         use xml::common::XmlVersion;
+        use xml::writer::events::XmlEvent;
+        use xml::writer::EventWriter;
 
         let mut emitter = EventWriter::new_with_config(w, config);
         emitter.write(XmlEvent::StartDocument {
@@ -275,32 +284,5 @@ impl Element {
             standalone: None,
         })?;
         self._write(&mut emitter)
-    }
-
-    /// Find a child element with the given name and return a reference to it.
-    pub fn get_child<K>(&self, k: K) -> Option<&Element>
-    where
-        String: PartialEq<K>,
-    {
-        self.children.iter().find(|e| e.name == k)
-    }
-
-    /// Find a child element with the given name and return a mutable reference to it.
-    pub fn get_mut_child<K>(&mut self, k: K) -> Option<&mut Element>
-    where
-        String: PartialEq<K>,
-    {
-        self.children.iter_mut().find(|e| e.name == k)
-    }
-
-    /// Find a child element with the given name, remove and return it.
-    pub fn take_child<K>(&mut self, k: K) -> Option<Element>
-    where
-        String: PartialEq<K>,
-    {
-        self.children
-            .iter()
-            .position(|e| e.name == k)
-            .map(|i| self.children.remove(i))
     }
 }
